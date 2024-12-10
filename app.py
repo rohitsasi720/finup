@@ -1,70 +1,158 @@
 import re
-from flask import Flask, request
+from flask import Flask, request, jsonify
 import telegram
 from telebot.credentials import bot_token, bot_user_name, URL
 import os
+import logging
+import sys
+import json
 
+# Set up logging to show everything
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    stream=sys.stdout
+)
+logger = logging.getLogger(__name__)
+
+# Log the environment variables (excluding sensitive data)
+logger.debug("URL from environment: %s", os.environ.get('URL'))
+logger.debug("Bot username from environment: %s", os.environ.get('BOT_USERNAME'))
+logger.debug("Bot token exists: %s", bool(os.environ.get('BOT_TOKEN')))
 
 global bot
 global TOKEN
 TOKEN = bot_token
-bot = telegram.Bot(token=TOKEN)
+logger.debug("Token being used: %s", TOKEN[:4] + '...')  # Log just the start of the token
+
+try:
+    bot = telegram.Bot(token=TOKEN)
+    bot_info = bot.get_me()
+    logger.info("Bot initialized successfully: %s", bot_info.username)
+except Exception as e:
+    logger.error("Failed to initialize bot: %s", str(e), exc_info=True)
+    raise
 
 app = Flask(__name__)
 
 @app.route('/{}'.format(TOKEN), methods=['POST'])
 def respond():
-   # retrieve the message in JSON and then transform it to Telegram object
-   update = telegram.Update.de_json(request.get_json(force=True), bot)
+   try:
+       # Log the raw request
+       logger.debug("Raw request headers: %s", dict(request.headers))
+       request_json = request.get_json(force=True)
+       logger.debug("Received request data: %s", json.dumps(request_json, indent=2))
 
-   chat_id = update.message.chat.id
-   msg_id = update.message.message_id
+       # retrieve the message in JSON and then transform it to Telegram object
+       update = telegram.Update.de_json(request_json, bot)
+       logger.info("Processed update: %s", update)
 
-   # Telegram understands UTF-8, so encode text for unicode compatibility
-   text = update.message.text.encode('utf-8').decode()
-   # for debugging purposes only
-   print("got text message :", text)
-   # the first time you chat with the bot AKA the welcoming message
-   if text == "/start":
-       # print the welcoming message
-       bot_welcome = """
-       Welcome to coolAvatar bot, the bot is using the service from http://avatars.adorable.io/ to generate cool looking avatars based on the name you enter so please enter a name and the bot will reply with an avatar for your name.
-       """
-       # send the welcoming message
-       bot.sendMessage(chat_id=chat_id, text=bot_welcome, reply_to_message_id=msg_id)
+       if not update or not update.message:
+           logger.error("Invalid update received: %s", update)
+           return jsonify({'error': 'Invalid update'})
 
+       chat_id = update.message.chat.id
+       msg_id = update.message.message_id
 
-   else:
-       try:
-           # clear the message we got from any non alphabets
-           text = re.sub(r"\W", "_", text)
-           # create the api link for the avatar based on http://avatars.adorable.io/
-           url = "https://api.adorable.io/avatars/285/{}.png".format(text.strip())
-           # reply with a photo to the name the user sent,
-           # note that you can send photos by url and telegram will fetch it for you
-           bot.sendPhoto(chat_id=chat_id, photo=url, reply_to_message_id=msg_id)
-       except Exception as e:
-           print(f"Error: {str(e)}")
-           # if things went wrong
-           bot.sendMessage(chat_id=chat_id, text="There was a problem in the name you used, please enter different name", reply_to_message_id=msg_id)
+       # Log chat details
+       logger.info("Chat ID: %s, Message ID: %s", chat_id, msg_id)
 
-   return 'ok'
+       if not update.message.text:
+           logger.error("No text in message: %s", update.message)
+           return jsonify({'error': 'No text in message'})
+
+       text = update.message.text.encode('utf-8').decode()
+       logger.info("Received message: %s from chat_id: %s", text, chat_id)
+       
+       if text == "/start":
+           logger.info("Received /start command from chat_id: %s", chat_id)
+           try:
+               # Simple welcome message for testing
+               welcome_text = "Hello! I'm your bot. I'm working!"
+               logger.info("Attempting to send welcome message to chat_id: %s", chat_id)
+               
+               # Try sending message without reply_to_message_id first
+               sent_message = bot.sendMessage(chat_id=chat_id, text=welcome_text)
+               logger.info("Welcome message sent successfully: %s", sent_message)
+               
+               return jsonify({'status': 'ok', 'message': 'Welcome message sent'})
+           except Exception as e:
+               logger.error("Failed to send welcome message: %s", str(e), exc_info=True)
+               return jsonify({'error': f'Failed to send message: {str(e)}'})
+
+       else:
+           try:
+               logger.info("Processing non-start message: %s", text)
+               # Send a simple echo response for testing
+               response_text = f"You said: {text}"
+               sent_message = bot.sendMessage(chat_id=chat_id, text=response_text)
+               logger.info("Response sent successfully: %s", sent_message)
+               return jsonify({'status': 'ok', 'message': 'Response sent'})
+           except Exception as e:
+               logger.error("Error processing message: %s", str(e), exc_info=True)
+               return jsonify({'error': str(e)})
+
+   except Exception as e:
+       logger.error("Error in respond function: %s", str(e), exc_info=True)
+       return jsonify({'error': str(e)})
 
 @app.route('/set_webhook', methods=['GET', 'POST'])
 def set_webhook():
-   # Get the webhook URL from environment, fallback to local development URL
-   webhook_url = os.environ.get('URL', 'http://localhost:5000')
-   webhook_url = webhook_url.rstrip('/') + '/' + TOKEN
-   
-   s = bot.setWebhook(webhook_url)
-   if s:
-       return f"webhook setup ok: {webhook_url}"
-   else:
-       return "webhook setup failed"
+   try:
+       # Get the webhook URL from environment, fallback to local development URL
+       webhook_url = os.environ.get('URL', 'http://localhost:5000')
+       webhook_url = webhook_url.rstrip('/') + '/' + TOKEN
+       
+       logger.info("Setting webhook to URL: %s", webhook_url)
+       
+       # First, delete any existing webhook
+       bot.delete_webhook()
+       logger.info("Deleted existing webhook")
+       
+       # Set the new webhook
+       s = bot.setWebhook(webhook_url)
+       
+       # Get webhook info
+       webhook_info = bot.get_webhook_info()
+       logger.info("Webhook info: %s", webhook_info)
+       
+       if s:
+           logger.info("Webhook setup successful")
+           return jsonify({
+               'status': 'ok',
+               'webhook_url': webhook_url,
+               'webhook_info': str(webhook_info)
+           })
+       else:
+           logger.error("Webhook setup failed")
+           return jsonify({
+               'status': 'error',
+               'message': 'Webhook setup failed',
+               'webhook_info': str(webhook_info)
+           })
+   except Exception as e:
+       logger.error("Error setting webhook: %s", str(e), exc_info=True)
+       return jsonify({
+           'status': 'error',
+           'message': str(e)
+       })
 
 @app.route('/')
 def index():
-   return 'Bot is running'
+   try:
+       bot_info = bot.get_me()
+       webhook_info = bot.get_webhook_info()
+       return jsonify({
+           'status': 'Bot is running',
+           'bot_info': str(bot_info),
+           'webhook_info': str(webhook_info)
+       })
+   except Exception as e:
+       logger.error("Error in index route: %s", str(e), exc_info=True)
+       return jsonify({
+           'status': 'error',
+           'message': str(e)
+       })
 
 
 if __name__ == '__main__':
