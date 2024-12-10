@@ -1,0 +1,13 @@
+[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "hypercorn app:app --bind 0.0.0.0:$PORT"
+healthcheckPath = "/"
+healthcheckTimeout = 100
+
+[deploy.buildCommand]
+steps = [
+    "apt-get update",
+    "apt-get install -y chromium-browser chromium-chromedriver xvfb",
+] 

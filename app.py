@@ -8,6 +8,7 @@ import sys
 import json
 import asyncio
 from telegram.error import TelegramError
+from bse_scraper import get_bse_screenshot
 
 # Set up logging
 logging.basicConfig(
@@ -17,10 +18,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Log the environment variables (excluding sensitive data)
-logger.debug("URL from environment: %s", os.environ.get('URL'))
-logger.debug("Bot username from environment: %s", os.environ.get('BOT_USERNAME'))
-logger.debug("Bot token exists: %s", bool(os.environ.get('BOT_TOKEN')))
+# Log startup information
+logger.info("Bot is starting up...")
+logger.info("Environment variables:")
+logger.info(f"URL: {os.environ.get('URL')}")
+logger.info(f"BOT_USERNAME: {os.environ.get('BOT_USERNAME')}")
+logger.info(f"BOT_TOKEN exists: {bool(os.environ.get('BOT_TOKEN'))}")
 
 global bot
 global TOKEN
@@ -32,6 +35,12 @@ bot = telegram.Bot(token=TOKEN)
 
 app = Flask(__name__)
 
+@app.before_request
+def log_request_info():
+    logger.debug('Headers: %s', dict(request.headers))
+    logger.debug('Body: %s', request.get_data())
+    logger.debug('Path: %s', request.path)
+
 async def verify_webhook():
     try:
         webhook_info = await bot.get_webhook_info()
@@ -39,17 +48,25 @@ async def verify_webhook():
         
         webhook_url = os.environ.get('URL', '').rstrip('/') + '/' + TOKEN
         
-        if webhook_info.url != webhook_url:
-            logger.warning("Webhook URL mismatch. Expected: %s, Got: %s", webhook_url, webhook_info.url)
-            logger.info("Setting new webhook URL...")
+        if not webhook_info.url:
+            logger.warning("No webhook URL set. Setting now...")
             await bot.delete_webhook()
             success = await bot.set_webhook(webhook_url)
             if success:
                 logger.info("Webhook set successfully to: %s", webhook_url)
             else:
                 logger.error("Failed to set webhook")
+        elif webhook_info.url != webhook_url:
+            logger.warning("Webhook URL mismatch. Expected: %s, Got: %s", webhook_url, webhook_info.url)
+            logger.info("Updating webhook URL...")
+            await bot.delete_webhook()
+            success = await bot.set_webhook(webhook_url)
+            if success:
+                logger.info("Webhook updated successfully to: %s", webhook_url)
+            else:
+                logger.error("Failed to update webhook")
         else:
-            logger.info("Webhook URL is correctly set")
+            logger.info("Webhook URL is correctly set to: %s", webhook_info.url)
             
     except Exception as e:
         logger.error("Error verifying webhook: %s", str(e), exc_info=True)
@@ -72,9 +89,26 @@ async def send_telegram_message(chat_id, text, reply_to_message_id=None):
         logger.error("Error sending message: %s", str(e), exc_info=True)
         raise
 
+async def send_telegram_photo(chat_id, photo_path, caption=None, reply_to_message_id=None):
+    try:
+        logger.info("Attempting to send photo to chat_id %s: %s", chat_id, photo_path)
+        with open(photo_path, 'rb') as photo:
+            message = await bot.send_photo(
+                chat_id=chat_id,
+                photo=photo,
+                caption=caption,
+                reply_to_message_id=reply_to_message_id
+            )
+        logger.info("Photo sent successfully")
+        return message
+    except Exception as e:
+        logger.error("Error sending photo: %s", str(e), exc_info=True)
+        raise
+
 @app.route('/{}'.format(TOKEN), methods=['POST'])
 async def respond():
     try:
+        logger.info("Received webhook request")
         # Log the raw request
         logger.debug("Raw request headers: %s", dict(request.headers))
         request_json = request.get_json(force=True)
@@ -106,18 +140,51 @@ async def respond():
         
         if text == "/start":
             logger.info("Received /start command from chat_id: %s", chat_id)
-            welcome_text = "Hello! I'm your bot. I'm working!"
+            welcome_text = """
+            Welcome! I'm your BSE bot. Available commands:
+            /start - Show this help message
+            /bse - Get BSE screenshot
+            """
             try:
                 await send_telegram_message(chat_id, welcome_text, msg_id)
+                logger.info("Start message sent successfully")
                 return jsonify({'status': 'ok', 'message': 'Welcome message sent'})
             except Exception as e:
                 logger.error("Failed to send welcome message: %s", str(e))
                 return jsonify({'error': str(e)})
+        
+        elif text == "/bse":
+            try:
+                # Send a processing message
+                await send_telegram_message(chat_id, "Processing BSE request... Please wait.", msg_id)
+                
+                # Get the screenshot
+                screenshot_path = await get_bse_screenshot()
+                
+                # Send the screenshot
+                await send_telegram_photo(
+                    chat_id, 
+                    screenshot_path, 
+                    caption="BSE Screenshot", 
+                    reply_to_message_id=msg_id
+                )
+                
+                # Clean up the screenshot file
+                os.remove(screenshot_path)
+                
+                return jsonify({'status': 'ok', 'message': 'BSE screenshot sent'})
+            except Exception as e:
+                error_message = f"Failed to get BSE screenshot: {str(e)}"
+                logger.error(error_message)
+                await send_telegram_message(chat_id, error_message, msg_id)
+                return jsonify({'error': error_message})
+        
         else:
-            logger.info("Processing non-start message: %s", text)
-            response_text = f"You said: {text}"
+            logger.info("Processing non-command message: %s", text)
+            response_text = "Please use one of the available commands:\n/start - Show help\n/bse - Get BSE screenshot"
             try:
                 await send_telegram_message(chat_id, response_text, msg_id)
+                logger.info("Response message sent successfully")
                 return jsonify({'status': 'ok', 'message': 'Response sent'})
             except Exception as e:
                 logger.error("Failed to send response message: %s", str(e))
