@@ -10,7 +10,6 @@ import asyncio
 from telegram.error import TelegramError
 from bse_scraper import get_bse_screenshot
 from telegram.request import HTTPXRequest
-from telegram.constants import HTTPVersion
 
 # Set up logging
 logging.basicConfig(
@@ -37,8 +36,7 @@ request = HTTPXRequest(
     connect_timeout=60.0,
     read_timeout=60.0,
     write_timeout=60.0,
-    pool_timeout=30.0,
-    http_version=HTTPVersion.HTTP_1_1
+    pool_timeout=30.0
 )
 
 # Initialize bot with custom request object
