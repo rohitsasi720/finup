@@ -9,6 +9,8 @@ import json
 import asyncio
 from telegram.error import TelegramError
 from bse_scraper import get_bse_screenshot
+from telegram.request import HTTPXRequest
+from telegram.constants import HTTPVersion
 
 # Set up logging
 logging.basicConfig(
@@ -28,10 +30,20 @@ logger.info(f"BOT_TOKEN exists: {bool(os.environ.get('BOT_TOKEN'))}")
 global bot
 global TOKEN
 TOKEN = bot_token
-logger.debug("Token being used: %s", TOKEN[:4] + '...')
 
-# Initialize bot
-bot = telegram.Bot(token=TOKEN)
+# Configure custom request object with larger connection pool
+request = HTTPXRequest(
+    connection_pool_size=8,
+    connect_timeout=60.0,
+    read_timeout=60.0,
+    write_timeout=60.0,
+    pool_timeout=30.0,
+    http_version=HTTPVersion.HTTP_1_1
+)
+
+# Initialize bot with custom request object
+bot = telegram.Bot(token=TOKEN, request=request)
+logger.debug("Token being used: %s", TOKEN[:4] + '...')
 
 app = Flask(__name__)
 
