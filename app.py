@@ -1,7 +1,7 @@
 import re
 from flask import Flask, request
 import telegram
-from telebot.credentials import bot_token, bot_user_name,URL
+from telebot.credentials import bot_token, bot_user_name, URL
 import os
 
 
@@ -43,7 +43,8 @@ def respond():
            # reply with a photo to the name the user sent,
            # note that you can send photos by url and telegram will fetch it for you
            bot.sendPhoto(chat_id=chat_id, photo=url, reply_to_message_id=msg_id)
-       except Exception:
+       except Exception as e:
+           print(f"Error: {str(e)}")
            # if things went wrong
            bot.sendMessage(chat_id=chat_id, text="There was a problem in the name you used, please enter different name", reply_to_message_id=msg_id)
 
@@ -51,21 +52,21 @@ def respond():
 
 @app.route('/set_webhook', methods=['GET', 'POST'])
 def set_webhook():
-   s = bot.setWebhook('{URL}{HOOK}'.format(URL=URL, HOOK=TOKEN))
+   # Get the webhook URL from environment, fallback to local development URL
+   webhook_url = os.environ.get('URL', 'http://localhost:5000')
+   webhook_url = webhook_url.rstrip('/') + '/' + TOKEN
+   
+   s = bot.setWebhook(webhook_url)
    if s:
-       return "webhook setup ok"
+       return f"webhook setup ok: {webhook_url}"
    else:
        return "webhook setup failed"
 
 @app.route('/')
 def index():
-   return '.'
+   return 'Bot is running'
 
 
 if __name__ == '__main__':
     # Only for local development
-    app.run(threaded=True)
-else:
-    # For production
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
+    app.run(debug=True, port=5000)
