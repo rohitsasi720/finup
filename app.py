@@ -7,6 +7,7 @@ import logging
 import sys
 import json
 import asyncio
+from telegram.error import TelegramError
 
 # Set up logging
 logging.basicConfig(
@@ -31,11 +32,44 @@ bot = telegram.Bot(token=TOKEN)
 
 app = Flask(__name__)
 
+async def verify_webhook():
+    try:
+        webhook_info = await bot.get_webhook_info()
+        logger.info("Current webhook info: %s", webhook_info)
+        
+        webhook_url = os.environ.get('URL', '').rstrip('/') + '/' + TOKEN
+        
+        if webhook_info.url != webhook_url:
+            logger.warning("Webhook URL mismatch. Expected: %s, Got: %s", webhook_url, webhook_info.url)
+            logger.info("Setting new webhook URL...")
+            await bot.delete_webhook()
+            success = await bot.set_webhook(webhook_url)
+            if success:
+                logger.info("Webhook set successfully to: %s", webhook_url)
+            else:
+                logger.error("Failed to set webhook")
+        else:
+            logger.info("Webhook URL is correctly set")
+            
+    except Exception as e:
+        logger.error("Error verifying webhook: %s", str(e), exc_info=True)
+        raise
+
 async def send_telegram_message(chat_id, text, reply_to_message_id=None):
     try:
-        return await bot.send_message(chat_id=chat_id, text=text, reply_to_message_id=reply_to_message_id)
+        logger.info("Attempting to send message to chat_id %s: %s", chat_id, text)
+        message = await bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            reply_to_message_id=reply_to_message_id
+        )
+        logger.info("Message sent successfully: %s", message)
+        return message
+    except TelegramError as e:
+        logger.error("Telegram error sending message: %s", str(e), exc_info=True)
+        raise
     except Exception as e:
-        logger.error(f"Error sending message: {str(e)}")
+        logger.error("Error sending message: %s", str(e), exc_info=True)
         raise
 
 @app.route('/{}'.format(TOKEN), methods=['POST'])
@@ -45,6 +79,9 @@ async def respond():
         logger.debug("Raw request headers: %s", dict(request.headers))
         request_json = request.get_json(force=True)
         logger.debug("Received request data: %s", json.dumps(request_json, indent=2))
+
+        # Verify webhook on each request
+        await verify_webhook()
 
         # retrieve the message in JSON and then transform it to Telegram object
         update = telegram.Update.de_json(request_json, bot)
@@ -70,13 +107,21 @@ async def respond():
         if text == "/start":
             logger.info("Received /start command from chat_id: %s", chat_id)
             welcome_text = "Hello! I'm your bot. I'm working!"
-            await send_telegram_message(chat_id, welcome_text, msg_id)
-            return jsonify({'status': 'ok', 'message': 'Welcome message sent'})
+            try:
+                await send_telegram_message(chat_id, welcome_text, msg_id)
+                return jsonify({'status': 'ok', 'message': 'Welcome message sent'})
+            except Exception as e:
+                logger.error("Failed to send welcome message: %s", str(e))
+                return jsonify({'error': str(e)})
         else:
             logger.info("Processing non-start message: %s", text)
             response_text = f"You said: {text}"
-            await send_telegram_message(chat_id, response_text, msg_id)
-            return jsonify({'status': 'ok', 'message': 'Response sent'})
+            try:
+                await send_telegram_message(chat_id, response_text, msg_id)
+                return jsonify({'status': 'ok', 'message': 'Response sent'})
+            except Exception as e:
+                logger.error("Failed to send response message: %s", str(e))
+                return jsonify({'error': str(e)})
 
     except Exception as e:
         logger.error("Error in respond function: %s", str(e), exc_info=True)
@@ -85,6 +130,7 @@ async def respond():
 @app.route('/set_webhook', methods=['GET', 'POST'])
 async def set_webhook():
     try:
+        # Get the webhook URL from environment
         webhook_url = os.environ.get('URL', 'http://localhost:5000')
         webhook_url = webhook_url.rstrip('/') + '/' + TOKEN
         
@@ -95,13 +141,13 @@ async def set_webhook():
         logger.info("Deleted existing webhook")
         
         # Set the new webhook
-        s = await bot.set_webhook(webhook_url)
+        success = await bot.set_webhook(webhook_url)
         
         # Get webhook info
         webhook_info = await bot.get_webhook_info()
         logger.info("Webhook info: %s", webhook_info)
         
-        if s:
+        if success:
             logger.info("Webhook setup successful")
             return jsonify({
                 'status': 'ok',
@@ -125,12 +171,17 @@ async def set_webhook():
 @app.route('/')
 async def index():
     try:
+        # Verify webhook
+        await verify_webhook()
+        
         bot_info = await bot.get_me()
         webhook_info = await bot.get_webhook_info()
+        
         return jsonify({
             'status': 'Bot is running',
             'bot_info': str(bot_info),
-            'webhook_info': str(webhook_info)
+            'webhook_info': str(webhook_info),
+            'environment_url': os.environ.get('URL', 'Not set')
         })
     except Exception as e:
         logger.error("Error in index route: %s", str(e), exc_info=True)
