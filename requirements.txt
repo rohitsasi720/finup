@@ -8,3 +8,4 @@ python-telegram-bot==20.7
 selenium==4.15.2
 webdriver-manager==4.0.1
 Pillow==10.1.0
+httpx==0.25.2

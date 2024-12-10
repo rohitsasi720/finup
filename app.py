@@ -9,7 +9,7 @@ import json
 import asyncio
 from telegram.error import TelegramError
 from bse_scraper import get_bse_screenshot
-from telegram.request import HTTPXRequest
+import httpx
 
 # Set up logging
 logging.basicConfig(
@@ -30,17 +30,8 @@ global bot
 global TOKEN
 TOKEN = bot_token
 
-# Configure custom request object with larger connection pool
-request = HTTPXRequest(
-    connection_pool_size=8,
-    connect_timeout=60.0,
-    read_timeout=60.0,
-    write_timeout=60.0,
-    pool_timeout=30.0
-)
-
-# Initialize bot with custom request object
-bot = telegram.Bot(token=TOKEN, request=request)
+# Initialize bot with default settings
+bot = telegram.Bot(token=TOKEN)
 logger.debug("Token being used: %s", TOKEN[:4] + '...')
 
 app = Flask(__name__)
@@ -85,13 +76,14 @@ async def verify_webhook():
 async def send_telegram_message(chat_id, text, reply_to_message_id=None):
     try:
         logger.info("Attempting to send message to chat_id %s: %s", chat_id, text)
-        message = await bot.send_message(
-            chat_id=chat_id,
-            text=text,
-            reply_to_message_id=reply_to_message_id
-        )
-        logger.info("Message sent successfully: %s", message)
-        return message
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            message = await bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                reply_to_message_id=reply_to_message_id
+            )
+            logger.info("Message sent successfully: %s", message)
+            return message
     except TelegramError as e:
         logger.error("Telegram error sending message: %s", str(e), exc_info=True)
         raise
@@ -102,15 +94,16 @@ async def send_telegram_message(chat_id, text, reply_to_message_id=None):
 async def send_telegram_photo(chat_id, photo_path, caption=None, reply_to_message_id=None):
     try:
         logger.info("Attempting to send photo to chat_id %s: %s", chat_id, photo_path)
-        with open(photo_path, 'rb') as photo:
-            message = await bot.send_photo(
-                chat_id=chat_id,
-                photo=photo,
-                caption=caption,
-                reply_to_message_id=reply_to_message_id
-            )
-        logger.info("Photo sent successfully")
-        return message
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            with open(photo_path, 'rb') as photo:
+                message = await bot.send_photo(
+                    chat_id=chat_id,
+                    photo=photo,
+                    caption=caption,
+                    reply_to_message_id=reply_to_message_id
+                )
+            logger.info("Photo sent successfully")
+            return message
     except Exception as e:
         logger.error("Error sending photo: %s", str(e), exc_info=True)
         raise
