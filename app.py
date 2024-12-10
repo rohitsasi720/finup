@@ -2,6 +2,7 @@ import re
 from flask import Flask, request
 import telegram
 from telebot.credentials import bot_token, bot_user_name,URL
+import os
 
 
 global bot
@@ -62,4 +63,9 @@ def index():
 
 
 if __name__ == '__main__':
-   app.run(threaded=True)
+    # Only for local development
+    app.run(threaded=True)
+else:
+    # For production
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
