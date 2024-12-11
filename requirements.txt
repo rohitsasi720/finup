@@ -10,3 +10,4 @@ webdriver-manager==4.0.1
 Pillow==10.1.0
 httpx==0.25.2
 nest-asyncio==1.5.8
+quart==0.18.4
