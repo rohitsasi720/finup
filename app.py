@@ -10,6 +10,7 @@ import asyncio
 from telegram.error import TelegramError
 from bse_scraper import get_bse_screenshot
 import httpx
+from contextlib import asynccontextmanager
 
 # Set up logging
 logging.basicConfig(
@@ -34,6 +35,13 @@ TOKEN = bot_token
 bot = telegram.Bot(token=TOKEN)
 logger.debug("Token being used: %s", TOKEN[:4] + '...')
 
+# Create a custom HTTP client for the bot
+@asynccontextmanager
+async def get_http_client():
+    limits = httpx.Limits(max_keepalive_connections=5, max_connections=10)
+    async with httpx.AsyncClient(timeout=30.0, limits=limits) as client:
+        yield client
+
 app = Flask(__name__)
 
 @app.before_request
@@ -44,31 +52,32 @@ def log_request_info():
 
 async def verify_webhook():
     try:
-        webhook_info = await bot.get_webhook_info()
-        logger.info("Current webhook info: %s", webhook_info)
-        
-        webhook_url = os.environ.get('URL', '').rstrip('/') + '/' + TOKEN
-        
-        if not webhook_info.url:
-            logger.warning("No webhook URL set. Setting now...")
-            await bot.delete_webhook()
-            success = await bot.set_webhook(webhook_url)
-            if success:
-                logger.info("Webhook set successfully to: %s", webhook_url)
-            else:
-                logger.error("Failed to set webhook")
-        elif webhook_info.url != webhook_url:
-            logger.warning("Webhook URL mismatch. Expected: %s, Got: %s", webhook_url, webhook_info.url)
-            logger.info("Updating webhook URL...")
-            await bot.delete_webhook()
-            success = await bot.set_webhook(webhook_url)
-            if success:
-                logger.info("Webhook updated successfully to: %s", webhook_url)
-            else:
-                logger.error("Failed to update webhook")
-        else:
-            logger.info("Webhook URL is correctly set to: %s", webhook_info.url)
+        async with get_http_client() as client:
+            webhook_info = await bot.get_webhook_info()
+            logger.info("Current webhook info: %s", webhook_info)
             
+            webhook_url = os.environ.get('URL', '').rstrip('/') + '/' + TOKEN
+            
+            if not webhook_info.url:
+                logger.warning("No webhook URL set. Setting now...")
+                await bot.delete_webhook()
+                success = await bot.set_webhook(webhook_url)
+                if success:
+                    logger.info("Webhook set successfully to: %s", webhook_url)
+                else:
+                    logger.error("Failed to set webhook")
+            elif webhook_info.url != webhook_url:
+                logger.warning("Webhook URL mismatch. Expected: %s, Got: %s", webhook_url, webhook_info.url)
+                logger.info("Updating webhook URL...")
+                await bot.delete_webhook()
+                success = await bot.set_webhook(webhook_url)
+                if success:
+                    logger.info("Webhook updated successfully to: %s", webhook_url)
+                else:
+                    logger.error("Failed to update webhook")
+            else:
+                logger.info("Webhook URL is correctly set to: %s", webhook_info.url)
+                
     except Exception as e:
         logger.error("Error verifying webhook: %s", str(e), exc_info=True)
         raise
@@ -76,7 +85,7 @@ async def verify_webhook():
 async def send_telegram_message(chat_id, text, reply_to_message_id=None):
     try:
         logger.info("Attempting to send message to chat_id %s: %s", chat_id, text)
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with get_http_client() as client:
             message = await bot.send_message(
                 chat_id=chat_id,
                 text=text,
@@ -94,7 +103,7 @@ async def send_telegram_message(chat_id, text, reply_to_message_id=None):
 async def send_telegram_photo(chat_id, photo_path, caption=None, reply_to_message_id=None):
     try:
         logger.info("Attempting to send photo to chat_id %s: %s", chat_id, photo_path)
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with get_http_client() as client:
             with open(photo_path, 'rb') as photo:
                 message = await bot.send_photo(
                     chat_id=chat_id,

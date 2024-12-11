@@ -2,7 +2,7 @@
 builder = "nixpacks"
 
 [deploy]
-startCommand = "hypercorn app:app --bind 0.0.0.0:$PORT"
+startCommand = "hypercorn app:app --bind 0.0.0.0:$PORT --workers 2"
 healthcheckPath = "/"
 healthcheckTimeout = 100
 
